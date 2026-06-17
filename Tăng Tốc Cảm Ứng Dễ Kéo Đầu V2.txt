@@ -1,0 +1,57 @@
+using UnityEngine;
+
+public class GameSmoothOptimizer
+{
+    private Vector2 aimCurrent;
+    private Vector2 aimVelocity;
+
+    private float deltaSmooth;
+    private float fpsDelta;
+
+    public float sensitivity = 1.25f;
+    public float smoothTime = 0.05f;
+    public float maxSpeed = 45f;
+    public float deadZone = 0.0012f;
+
+    public float deltaSmoothFactor = 0.12f;
+
+    public Vector2 UpdateAim(Vector2 rawInput, float deltaTime)
+    {
+        deltaTime = SmoothDelta(deltaTime);
+
+        Vector2 targetAim = rawInput * sensitivity;
+
+        Vector2 delta = targetAim - aimCurrent;
+
+        if (delta.magnitude < deadZone)
+        {
+            aimCurrent = targetAim;
+            aimVelocity = Vector2.zero;
+            return aimCurrent;
+        }
+
+        aimCurrent = Vector2.SmoothDamp(
+            aimCurrent,
+            targetAim,
+            ref aimVelocity,
+            smoothTime,
+            maxSpeed,
+            deltaTime
+        );
+
+        return aimCurrent;
+    }
+
+    private float SmoothDelta(float delta)
+    {
+        deltaSmooth = Mathf.Lerp(deltaSmooth, delta, deltaSmoothFactor);
+        fpsDelta = Mathf.Clamp(deltaSmooth, 0.005f, 0.033f);
+        return fpsDelta;
+    }
+
+    public void Reset(Vector2 aim)
+    {
+        aimCurrent = aim;
+        aimVelocity = Vector2.zero;
+    }
+}

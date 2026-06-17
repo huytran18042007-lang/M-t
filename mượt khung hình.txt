@@ -1,0 +1,10 @@
+com.fps.renderPipelineBoost=1.4;
+com.fps.fastFlush=on;
+com.fps.forceHighHz=true;
+com.fps.frameByTouchLock=true;
+com.fps.predictionOverride=fastest;
+com.fps.motionPathAdjust=true;
+com.fps.dropClampStrict=true;
+com.fps.noBufferDelay=true;
+com.fps.ghostFrameFix=true;
+com.fps.overrideIdleFrames=true;

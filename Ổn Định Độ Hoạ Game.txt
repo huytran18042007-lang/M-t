@@ -1,0 +1,198 @@
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <mutex>
+#include <string>
+#include <cstdlib>
+#include <functional>
+#include <vector>
+
+extern "C" {
+
+typedef void (*render_callback_t)(void* ctx);
+
+class CacheOptimizer {
+    std::mutex m;
+public:
+    int clearAppCachePath(const char* path) {
+        if (!path) return 0;
+        std::lock_guard<std::mutex> lk(m);
+        std::string cmd = std::string("rm -rf \"") + path + "/cache/*\" >/dev/null 2>&1";
+        int r = system(cmd.c_str());
+        return (r == 0) ? 1 : 0;
+    }
+    int clearDirectory(const char* path) {
+        if (!path) return 0;
+        std::lock_guard<std::mutex> lk(m);
+        std::string cmd = std::string("rm -rf \"") + path + "/*\" >/dev/null 2>&1";
+        int r = system(cmd.c_str());
+        return (r == 0) ? 1 : 0;
+    }
+    int dropSystemCaches() {
+        std::lock_guard<std::mutex> lk(m);
+        int r = system("sync >/dev/null 2>&1 && echo 3 > /proc/sys/vm/drop_caches >/dev/null 2>&1");
+        return (r == 0) ? 1 : 0;
+    }
+    int fstrimPath(const char* path) {
+        if (!path) return 0;
+        std::lock_guard<std::mutex> lk(m);
+        std::string cmd = std::string("fstrim -v \"") + path + "\" >/dev/null 2>&1";
+        int r = system(cmd.c_str());
+        return (r == 0) ? 1 : 0;
+    }
+    int killByName(const char* name) {
+        if (!name) return 0;
+        std::lock_guard<std::mutex> lk(m);
+        std::string cmd = std::string("pkill -f \"") + name + "\" >/dev/null 2>&1";
+        int r = system(cmd.c_str());
+        return (r == 0) ? 1 : 0;
+    }
+};
+
+class GraphicsOptimizer {
+    std::atomic<bool> running;
+    std::atomic<int> targetFPS;
+    std::atomic<int> minFPS;
+    std::atomic<bool> adaptive;
+    std::thread worker;
+    std::mutex cb_mtx;
+    render_callback_t cb;
+    void* cb_ctx;
+public:
+    GraphicsOptimizer(): running(false), targetFPS(60), minFPS(30), adaptive(true), cb(nullptr), cb_ctx(nullptr) {}
+    int setTargetFPS(int fps) {
+        if (fps < 15) return 0;
+        targetFPS.store(fps);
+        return 1;
+    }
+    int setMinFPS(int fps) {
+        if (fps < 5) return 0;
+        minFPS.store(fps);
+        return 1;
+    }
+    void setAdaptive(bool a) { adaptive.store(a); }
+    void setRenderCallback(render_callback_t f, void* ctx) {
+        std::lock_guard<std::mutex> lk(cb_mtx);
+        cb = f;
+        cb_ctx = ctx;
+    }
+    int start() {
+        bool expected = false;
+        if (!running.compare_exchange_strong(expected, true)) return 0;
+        worker = std::thread([this]() {
+            using namespace std::chrono;
+            auto lastTime = high_resolution_clock::now();
+            std::vector<int> history;
+            history.reserve(64);
+            while (running.load()) {
+                auto frameStart = high_resolution_clock::now();
+                {
+                    std::lock_guard<std::mutex> lk(cb_mtx);
+                    if (cb) cb(cb_ctx);
+                }
+                auto frameEnd = high_resolution_clock::now();
+                auto frameMs = duration_cast<milliseconds>(frameEnd - frameStart).count();
+                int curFPS = frameMs > 0 ? static_cast<int>(1000 / frameMs) : targetFPS.load();
+                history.push_back(curFPS);
+                if (history.size() > 64) history.erase(history.begin());
+                int avg = 0;
+                for (int v : history) avg += v;
+                avg = history.empty() ? curFPS : avg / static_cast<int>(history.size());
+                int tgt = targetFPS.load();
+                int minf = minFPS.load();
+                int waitMs = 1000 / tgt - static_cast<int>(frameMs);
+                if (adaptive.load()) {
+                    if (avg < tgt / 2 && tgt > minf) {
+                        tgt = std::max(minf, tgt - 5);
+                        targetFPS.store(tgt);
+                        waitMs = 1000 / tgt - static_cast<int>(frameMs);
+                    } else if (avg >= targetFPS.load() && targetFPS.load() < 120) {
+                        targetFPS.store(std::min(120, targetFPS.load() + 1));
+                        waitMs = 1000 / targetFPS.load() - static_cast<int>(frameMs);
+                    }
+                }
+                if (waitMs > 0) std::this_thread::sleep_for(milliseconds(waitMs));
+                else std::this_thread::yield();
+                lastTime = frameStart;
+            }
+        });
+        return 1;
+    }
+    int stop() {
+        if (!running.load()) return 0;
+        running.store(false);
+        if (worker.joinable()) worker.join();
+        return 1;
+    }
+};
+
+static CacheOptimizer* g_cache = nullptr;
+static GraphicsOptimizer* g_graph = nullptr;
+
+void* cacheopt_create() {
+    if (!g_cache) g_cache = new CacheOptimizer();
+    return g_cache;
+}
+int cacheopt_clear_app_cache(void* h, const char* path) {
+    if (!h || !path) return 0;
+    return static_cast<CacheOptimizer*>(h)->clearAppCachePath(path);
+}
+int cacheopt_clear_dir(void* h, const char* path) {
+    if (!h || !path) return 0;
+    return static_cast<CacheOptimizer*>(h)->clearDirectory(path);
+}
+int cacheopt_drop_caches(void* h) {
+    if (!h) return 0;
+    return static_cast<CacheOptimizer*>(h)->dropSystemCaches();
+}
+int cacheopt_fstrim(void* h, const char* path) {
+    if (!h || !path) return 0;
+    return static_cast<CacheOptimizer*>(h)->fstrimPath(path);
+}
+int cacheopt_kill_name(void* h, const char* name) {
+    if (!h || !name) return 0;
+    return static_cast<CacheOptimizer*>(h)->killByName(name);
+}
+int cacheopt_destroy(void* h) {
+    if (!h) return 0;
+    delete static_cast<CacheOptimizer*>(h);
+    g_cache = nullptr;
+    return 1;
+}
+
+void* graphopt_create() {
+    if (!g_graph) g_graph = new GraphicsOptimizer();
+    return g_graph;
+}
+int graphopt_set_target(void* h, int fps) {
+    if (!h) return 0;
+    return static_cast<GraphicsOptimizer*>(h)->setTargetFPS(fps);
+}
+int graphopt_set_min(void* h, int fps) {
+    if (!h) return 0;
+    return static_cast<GraphicsOptimizer*>(h)->setMinFPS(fps);
+}
+void graphopt_set_adaptive(void* h, int on) {
+    if (!h) return;
+    static_cast<GraphicsOptimizer*>(h)->setAdaptive(on != 0);
+}
+void graphopt_set_callback(void* h, render_callback_t cb, void* ctx) {
+    if (!h) return;
+    static_cast<GraphicsOptimizer*>(h)->setRenderCallback(cb, ctx);
+}
+int graphopt_start(void* h) {
+    if (!h) return 0;
+    return static_cast<GraphicsOptimizer*>(h)->start();
+}
+int graphopt_stop(void* h) {
+    if (!h) return 0;
+    return static_cast<GraphicsOptimizer*>(h)->stop();
+}
+int graphopt_destroy(void* h) {
+    if (!h) return 0;
+    delete static_cast<GraphicsOptimizer*>(h);
+    g_graph = nullptr;
+    return 1;
+}
+
+}

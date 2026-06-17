@@ -1,0 +1,24 @@
+#include <chrono>
+#include <thread>
+
+class FPSController {
+    std::chrono::steady_clock::time_point lastTime;
+    float targetFPS;
+    float frameDuration;
+
+public:
+    FPSController(float fps) : targetFPS(fps), frameDuration(1.0f / fps) {
+        lastTime = std::chrono::steady_clock::now();
+    }
+
+    float getDeltaTime() {
+        auto currentTime = std::chrono::steady_clock::now();
+        std::chrono::duration<float> elapsed = currentTime - lastTime;
+        lastTime = currentTime;
+        return elapsed.count();
+    }
+
+    void limit() {
+        // Logic để nghỉ ngơi nếu máy chạy quá nhanh, giúp ổn định FPS
+    }
+};

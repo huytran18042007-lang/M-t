@@ -1,0 +1,166 @@
+#include <iostream>
+#include <map>
+#include <string>
+#include <variant>
+#include <optional>
+#include <cmath>
+#include <chrono>
+#include <thread>
+
+class AdvancedInputManager {
+public:
+    using SettingValue = std::variant<int, double, bool, std::string>;
+
+    void setSetting(const std::string& key, SettingValue value) {
+        settings[key] = std::move(value);
+        if (key == "fps_target") {
+            updateFrameInterval();
+        }
+    }
+
+    std::optional<SettingValue> getSetting(const std::string& key) const {
+        auto it = settings.find(key);
+        return it != settings.end() ? std::optional<SettingValue>(it->second) : std::nullopt;
+    }
+
+private:
+    std::map<std::string, SettingValue> settings;
+    double frameIntervalMs = 16.6667; // Default 60fps
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastFrameTime;
+
+    void updateFrameInterval() {
+        if (auto fps = getSetting("fps_target")) {
+            int targetFps = std::get<int>(*fps);
+            if (targetFps > 0) {
+                frameIntervalMs = 1000.0 / targetFps;
+            }
+        }
+    }
+
+    double getSmoothingFactor() const {
+        double smoothing = 0.5; // Default medium smoothing
+        if (auto setting = getSetting("aim_smoothing")) {
+            smoothing = std::get<double>(*setting);
+        }
+        return std::clamp(smoothing, 0.0, 1.0);
+    }
+
+public:
+    AdvancedInputManager() {
+        lastFrameTime = std::chrono::high_resolution_clock::now();
+        // Default settings
+        setSetting("fps_target", 144);
+        setSetting("aim_smoothing", 0.7);
+        setSetting("reduce_delay", true);
+        setSetting("boost_mode", "balanced");
+        setSetting("dpi", 800.0);
+        setSetting("sensitivity", 1.2);
+    }
+
+    // Frame rate control and delay optimization
+    void optimizeFrameRate() {
+        auto now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrameTime).count();
+        
+        double targetInterval = frameIntervalMs;
+        bool reduceDelay = true;
+        if (auto setting = getSetting("reduce_delay")) {
+            reduceDelay = std::get<bool>(*setting);
+        }
+
+        if (reduceDelay) {
+            // Adaptive frame pacing with 10% reduction for delay compensation
+            targetInterval = frameIntervalMs * 0.9;
+        }
+
+        if (elapsed < targetInterval) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<long>(targetInterval - elapsed)));
+        }
+        lastFrameTime = std::chrono::high_resolution_clock::now();
+    }
+
+    // Enhanced smooth aiming with configurable smoothing
+    double applyAimSmoothing(double input) const {
+        static double lastInput = 0.0;
+        double smoothing = getSmoothingFactor();
+        
+        // Apply exponential smoothing
+        double smoothed = smoothing * lastInput + (1.0 - smoothing) * input;
+        lastInput = smoothed;
+        
+        return smoothed;
+    }
+
+    // Advanced boost with multiple modes
+    double applyBoost(double input) const {
+        std::string mode = "balanced";
+        if (auto setting = getSetting("boost_mode")) {
+            mode = std::get<std::string>(*setting);
+        }
+
+        double boost = 1.0;
+        if (auto setting = getSetting("boost_factor")) {
+            boost = std::get<double>(*setting);
+        }
+
+        if (mode == "aggressive") {
+            return input * boost * (1.0 + std::abs(input) / 5.0);
+        } 
+        else if (mode == "precise") {
+            return input * (boost * 0.8) * (1.0 + std::log1p(std::abs(input)) / 10.0);
+        }
+        else { // balanced
+            return input * boost;
+        }
+    }
+
+    // Combined processing for optimal input
+    double processInput(double rawInput) {
+        optimizeFrameRate();
+        
+        double smoothed = applyAimSmoothing(rawInput);
+        double boosted = applyBoost(smoothed);
+        
+        return boosted;
+    }
+
+    void displayPerformanceMetrics() const {
+        if (auto fps = getSetting("fps_target")) {
+            std::cout << "FPS Target: " << std::get<int>(*fps) << " (Interval: " 
+                      << frameIntervalMs << "ms)" << std::endl;
+        }
+        
+        if (auto smooth = getSetting("aim_smoothing")) {
+            std::cout << "Aim Smoothing: " << std::get<double>(*smooth) * 100 << "%" << std::endl;
+        }
+        
+        if (auto delay = getSetting("reduce_delay")) {
+            std::cout << "Delay Reduction: " << (std::get<bool>(*delay) ? "Enabled" : "Disabled") << std::endl;
+        }
+        
+        if (auto mode = getSetting("boost_mode")) {
+            std::cout << "Boost Mode: " << std::get<std::string>(*mode) << std::endl;
+        }
+    }
+};
+
+int main() {
+    AdvancedInputManager manager;
+    
+    // Custom settings
+    manager.setSetting("fps_target", 240);
+    manager.setSetting("aim_smoothing", 0.85);
+    manager.setSetting("boost_factor", 1.5);
+    manager.setSetting("boost_mode", "precise");
+    
+    // Test input processing
+    for (int i = 0; i < 5; i++) {
+        double testInput = 2.0 + (i * 0.5);
+        double processed = manager.processInput(testInput);
+        std::cout << "Input: " << testInput << " -> Processed: " << processed << std::endl;
+    }
+    
+    manager.displayPerformanceMetrics();
+    
+    return 0;
+}

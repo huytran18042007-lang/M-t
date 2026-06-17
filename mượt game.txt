@@ -1,0 +1,127 @@
+#include <iostream>
+#include <chrono>
+#include <queue>
+#include <algorithm>
+#include <cmath>
+
+class PerformanceOptimizer {
+private:
+    // Cấu hình hệ thống
+    struct Config {
+        // Fix lag
+        float maxFrameTime = 16.67f;       // 60 FPS
+        float frameTimeSmoothing = 0.9f;   // Làm mượt FPS
+        
+        // Fix delay
+        float inputBufferSize = 3;         // Độ trễ input (frames)
+        float delayCompensation = 0.15f;   // Bù delay 15%
+        
+        // Mượt game
+        float motionSmoothing = 0.85f;     // Làm mượt chuyển động
+    } config;
+
+    // Trạng thái hệ thống
+    struct State {
+        std::queue<float> inputBuffer;
+        float smoothedFrameTime = 16.67f;
+        float lastRenderTime = 0.0f;
+        float lastMovement = 0.0f;
+    } state;
+
+    // Theo dõi thời gian
+    std::chrono::high_resolution_clock::time_point lastFrame;
+
+public:
+    PerformanceOptimizer() {
+        lastFrame = std::chrono::high_resolution_clock::now();
+        // Khởi tạo buffer input
+        for (int i = 0; i < config.inputBufferSize; i++) {
+            state.inputBuffer.push(0.0f);
+        }
+    }
+
+    // Xử lý chính mỗi frame
+    void processFrame(float inputMovement) {
+        // 1. Tính toán thời gian frame
+        auto now = std::chrono::high_resolution_clock::now();
+        float frameTime = std::chrono::duration<float, std::milli>(now - lastFrame).count();
+        lastFrame = now;
+
+        // 2. Fix lag - Ổn định FPS
+        stabilizeFrameTime(frameTime);
+
+        // 3. Fix delay - Xử lý input
+        float processedInput = processInput(inputMovement);
+
+        // 4. Mượt game - Làm mượt chuyển động
+        smoothMovement(processedInput);
+    }
+
+private:
+    // Ổn định FPS và giảm lag
+    void stabilizeFrameTime(float currentFrameTime) {
+        // Làm mượt thời gian frame
+        state.smoothedFrameTime = config.frameTimeSmoothing * state.smoothedFrameTime + 
+                                 (1.0f - config.frameTimeSmoothing) * currentFrameTime;
+
+        // Nếu frame time vượt ngưỡng => giảm tải
+        if (state.smoothedFrameTime > config.maxFrameTime) {
+            float overloadRatio = state.smoothedFrameTime / config.maxFrameTime;
+            reduceWorkload(overloadRatio);
+        }
+    }
+
+    // Giảm tải khi FPS thấp
+    void reduceWorkload(float ratio) {
+        // Giảm chất lượng đồ họa tạm thời
+        float reduction = std::min(0.7f, (ratio - 1.0f) * 0.5f);
+        // std::cout << "Giảm tải: " << reduction * 100 << "%" << std::endl;
+    }
+
+    // Xử lý input và bù delay
+    float processInput(float input) {
+        // Thêm input vào buffer
+        state.inputBuffer.push(input);
+        state.inputBuffer.pop();
+
+        // Tính input trung bình để bù delay
+        float sum = 0.0f;
+        std::queue<float> temp = state.inputBuffer;
+        while (!temp.empty()) {
+            sum += temp.front();
+            temp.pop();
+        }
+        float avgInput = sum / config.inputBufferSize;
+
+        // Bù delay
+        return avgInput * (1.0f + config.delayCompensation);
+    }
+
+    // Làm mượt chuyển động
+    void smoothMovement(float input) {
+        state.lastMovement = config.motionSmoothing * state.lastMovement + 
+                           (1.0f - config.motionSmoothing) * input;
+    }
+
+public:
+    // Lấy movement đã được xử lý
+    float getProcessedMovement() const {
+        return state.lastMovement;
+    }
+};
+
+int main() {
+    PerformanceOptimizer optimizer;
+
+    // Giả lập game loop
+    for (int i = 0; i < 60; i++) {
+        float rawInput = 0.5f * (i % 3 - 1); // Input ngẫu nhiên
+        optimizer.processFrame(rawInput);
+        
+        // Lấy kết quả đã xử lý
+        float smoothMovement = optimizer.getProcessedMovement();
+        // Render game với movement mượt...
+    }
+
+    return 0;
+}

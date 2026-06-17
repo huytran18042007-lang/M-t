@@ -1,0 +1,52 @@
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <mutex>
+
+class FPSOptimizer {
+    std::atomic<bool> running{false};
+    int targetFPS = 60;
+    std::mutex mtx;
+public:
+    void setTargetFPS(int fps) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (fps > 30 && fps <= 240) targetFPS = fps;
+    }
+
+    void start() {
+        running = true;
+        std::thread([this]() {
+            while (running) {
+                auto startFrame = std::chrono::high_resolution_clock::now();
+                std::this_thread::sleep_for(frameDuration());
+                auto endFrame = std::chrono::high_resolution_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endFrame - startFrame).count();
+                if (elapsed < frameTimeMs()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(frameTimeMs() - elapsed));
+                }
+            }
+        }).detach();
+    }
+
+    void stop() {
+        running = false;
+    }
+
+private:
+    int frameTimeMs() {
+        std::lock_guard<std::mutex> lock(mtx);
+        return 1000 / targetFPS;
+    }
+
+    std::chrono::milliseconds frameDuration() {
+        return std::chrono::milliseconds(frameTimeMs());
+    }
+};
+
+extern "C" {
+    FPSOptimizer* fpsopt_create() { return new FPSOptimizer(); }
+    void fpsopt_set(FPSOptimizer* f, int fps) { if (f) f->setTargetFPS(fps); }
+    void fpsopt_start(FPSOptimizer* f) { if (f) f->start(); }
+    void fpsopt_stop(FPSOptimizer* f) { if (f) f->stop(); }
+    void fpsopt_destroy(FPSOptimizer* f) { if (f) delete f; }
+}

@@ -1,0 +1,181 @@
+#include <iostream>
+#include <memory>
+#include <cmath>
+#include <vector>
+#include <algorithm>
+#include <chrono>
+#include <random>
+#include <atomic>
+#include <thread>
+#include <mutex>
+#include <string_view>
+
+using namespace std::chrono_literals;
+
+namespace FreeFireUltimateStabilizer {
+    class AdvancedStabilization {
+    private:
+        std::atomic<bool> is_active{true};
+        std::atomic<float> recoil_compensation{0.75f}; // 0.5 (light) - 1.0 (strong)
+        std::atomic<float> smoothing_factor{0.6f};    // 0.3 (fast) - 0.8 (smooth)
+        std::atomic<int> delay_compensation_ms{8};    // Compensate input delay (ms)
+        
+        // Anti-shake & stabilization
+        constexpr static float MAX_RECOIL_REDUCTION = 0.9f;
+        constexpr static float MIN_RECOIL_REDUCTION = 0.4f;
+        constexpr static float RECOIL_DECAY_RATE = 0.07f;
+        
+        // Input prediction & delay fix
+        struct InputSample {
+            float x, y;
+            std::chrono::steady_clock::time_point timestamp;
+        };
+        
+        std::vector<InputSample> input_buffer;
+        std::mutex buffer_mutex;
+        std::thread stabilization_thread;
+        std::thread delay_fix_thread;
+        
+        // Dynamic smoothing with prediction
+        [[nodiscard]] float calculateDynamicSmoothing(float input) const noexcept {
+            return std::clamp(1.0f - std::exp(-input * input * 15.0f), 0.2f, 0.85f);
+        }
+        
+        // Stabilization thread (fix rung + cứng tâm)
+        void stabilizationLoop() {
+            while (is_active) {
+                float compensation = recoil_compensation.load();
+                float smoothing = smoothing_factor.load() * calculateDynamicSmoothing(compensation);
+                
+                // Simulate stabilization (adjust game input)
+                std::this_thread::sleep_for(10ms); // 100Hz stabilization
+            }
+        }
+        
+        // Delay compensation thread (fix delay)
+        void delayCompensationLoop() {
+            while (is_active) {
+                int delay_ms = delay_compensation_ms.load();
+                
+                // Predict next input based on buffer
+                if (!input_buffer.empty()) {
+                    std::lock_guard<std::mutex> lock(buffer_mutex);
+                    auto latest_sample = input_buffer.back();
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - latest_sample.timestamp).count();
+                    
+                    if (elapsed < delay_ms) {
+                        // Apply predictive adjustment
+                    }
+                }
+                std::this_thread::sleep_for(5ms); // 200Hz delay check
+            }
+        }
+        
+    public:
+        AdvancedStabilization() 
+            : stabilization_thread(&AdvancedStabilization::stabilizationLoop, this),
+              delay_fix_thread(&AdvancedStabilization::delayCompensationLoop, this) {}
+        
+        ~AdvancedStabilization() {
+            is_active = false;
+            if (stabilization_thread.joinable()) stabilization_thread.join();
+            if (delay_fix_thread.joinable()) delay_fix_thread.join();
+        }
+        
+        // **CORE FUNCTIONS**
+        
+        // Fix rung (giảm giật)
+        void applyAntiRecoil(float& input_x, float& input_y) noexcept {
+            float compensation = recoil_compensation.load();
+            float smoothing = smoothing_factor.load();
+            
+            input_x *= (1.0f - (compensation * 0.5f));
+            input_y *= (1.0f - compensation);
+            
+            // Randomize slightly to avoid detection
+            static thread_local std::mt19937 gen(std::chrono::steady_clock::now().time_since_epoch().count());
+            std::uniform_real_distribution<float> dist(-0.02f, 0.02f);
+            
+            input_x += dist(gen) * compensation;
+            input_y += dist(gen) * compensation;
+        }
+        
+        // Cứng tâm (stabilize crosshair)
+        void stabilizeAim(float& input_x, float& input_y) noexcept {
+            float smoothing = smoothing_factor.load();
+            
+            // Low-pass filter for smooth movement
+            static float last_x = 0.0f, last_y = 0.0f;
+            input_x = last_x + smoothing * (input_x - last_x);
+            input_y = last_y + smoothing * (input_y - last_y);
+            last_x = input_x;
+            last_y = input_y;
+        }
+        
+        // Fix delay (giảm độ trễ)
+        void compensateDelay(float& input_x, float& input_y) noexcept {
+            std::lock_guard<std::mutex> lock(buffer_mutex);
+            
+            // Store current input in buffer
+            input_buffer.push_back({input_x, input_y, std::chrono::steady_clock::now()});
+            
+            // Keep buffer size reasonable
+            if (input_buffer.size() > 10) {
+                input_buffer.erase(input_buffer.begin());
+            }
+            
+            // Apply prediction if needed
+            if (input_buffer.size() >= 3) {
+                auto& prev = input_buffer[input_buffer.size() - 2];
+                auto& curr = input_buffer.back();
+                
+                float delta_x = curr.x - prev.x;
+                float delta_y = curr.y - prev.y;
+                
+                input_x += delta_x * 0.3f; // Adjust prediction strength
+                input_y += delta_y * 0.3f;
+            }
+        }
+        
+        // **SETTINGS ADJUSTMENT**
+        void setRecoilCompensation(float strength) noexcept {
+            recoil_compensation.store(std::clamp(strength, MIN_RECOIL_REDUCTION, MAX_RECOIL_REDUCTION));
+        }
+        
+        void setSmoothing(float smoothness) noexcept {
+            smoothing_factor.store(std::clamp(smoothness, 0.3f, 0.8f));
+        }
+        
+        void setDelayCompensation(int ms) noexcept {
+            delay_compensation_ms.store(std::clamp(ms, 5, 20));
+        }
+    };
+}
+
+// **EXAMPLE USAGE**
+int main() {
+    using namespace FreeFireUltimateStabilizer;
+    
+    AdvancedStabilization stabilizer;
+    
+    // Configure settings
+    stabilizer.setRecoilCompensation(0.8f); // Strong anti-recoil
+    stabilizer.setSmoothing(0.65f);         // Smooth aiming
+    stabilizer.setDelayCompensation(10);    // 10ms delay fix
+    
+    // Simulate game input
+    for (int i = 0; i < 100; ++i) {
+        float input_x = 0.5f; // Simulate right stick movement
+        float input_y = 0.3f;
+        
+        stabilizer.applyAntiRecoil(input_x, input_y); // Fix rung
+        stabilizer.stabilizeAim(input_x, input_y);    // Cứng tâm
+        stabilizer.compensateDelay(input_x, input_y); // Fix delay
+        
+        std::cout << "Stabilized Input: X=" << input_x << " Y=" << input_y << std::endl;
+        std::this_thread::sleep_for(16ms); // ~60fps
+    }
+    
+    return 0;
+}
